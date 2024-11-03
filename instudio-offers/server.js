@@ -1,9 +1,10 @@
 const express = require('express');
 const multer = require('multer');
 const dotenv = require('dotenv');
+const { MongoClient } = require('mongodb');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { fromEnv } = require('@aws-sdk/credential-provider-env');
-const rateLimit = require('express-rate-limit'); // Importar el middleware
+const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
@@ -19,14 +20,28 @@ const s3 = new S3Client({
   credentials: fromEnv(),
 });
 
-// Configuración del middleware de Throttling
+// Configuración del cliente de MongoDB
+const mongoClient = new MongoClient(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+let db;
+mongoClient.connect()
+  .then(client => {
+    db = client.db(process.env.MONGO_DB_NAME);
+    console.log("Conexión a MongoDB exitosa");
+  })
+  .catch(error => console.error("Error conectando a MongoDB:", error));
+
+// Configuración de Throttling
 const uploadLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minuto
   max: 10, // Límite de 10 solicitudes por IP
   message: 'Demasiadas solicitudes de subida de imagen desde esta IP. Intenta nuevamente después de un minuto.',
 });
 
-// Ruta para subir imágenes con el middleware de throttling
+// Ruta para subir imágenes con throttling
 app.post('/upload', uploadLimiter, upload.single('image'), async (req, res) => {
   const file = req.file;
 
@@ -53,6 +68,19 @@ app.post('/upload', uploadLimiter, upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     return res.status(500).send('Error al subir la imagen: ' + error.message);
+  }
+});
+
+// Obtener ofertas limitadas desde MongoDB
+app.get('/offers', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50; // Límite de documentos a devolver
+    const offersCollection = db.collection('offers');
+
+    const offers = await offersCollection.find().limit(limit).toArray();
+    res.status(200).json(offers);
+  } catch (error) {
+    res.status(500).send('Error al obtener las ofertas: ' + error.message);
   }
 });
 
